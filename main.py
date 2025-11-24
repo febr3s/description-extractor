@@ -1,6 +1,7 @@
 import csv
 import requests
 import time
+import difflib
 from typing import List, Dict, Optional
 
 class BookDescriptionEnricher:
@@ -18,7 +19,28 @@ class BookDescriptionEnricher:
             self.rows = list(reader)
         return self.rows
     
-    def search_google_books(self, title: str) -> Optional[Dict]:
+    def normalize_title(self, title: str) -> str:
+        """Normalize title for comparison: lowercase, remove extra spaces, handle colons"""
+        if not title:
+            return ""
+        # Remove everything after colon for comparison purposes
+        base_title = title.split(':')[0].split(';')[0]
+        # Normalize spaces and case
+        return ' '.join(base_title.lower().split())
+    
+    def authors_match(self, authors1: List[str], authors2: List[str]) -> bool:
+        """Check if author lists are similar (same primary author)"""
+        if not authors1 or not authors2:
+            return False
+        
+        # Compare first author (most important)
+        primary1 = authors1[0].lower()
+        primary2 = authors2[0].lower()
+        
+        # Simple check - if first author matches, consider it good enough
+        return primary1 in primary2 or primary2 in primary1
+    
+    def search_google_books(self, title: str, author: str = None) -> Optional[Dict]:
         """Search Google Books API and return the best English result"""
         time.sleep(1)  # Basic rate limiting
         
@@ -26,7 +48,7 @@ class BookDescriptionEnricher:
             response = requests.get(
                 "https://www.googleapis.com/books/v1/volumes",
                 params={
-                    'q': title,
+                    'q': f"{title} {author}" if author else title,
                     'maxResults': 3,
                     'langRestrict': 'en'  # Prefer English results
                 },
@@ -53,6 +75,25 @@ class BookDescriptionEnricher:
             print(f"API error for '{title}': {e}")
             return None
     
+    def should_auto_accept(self, original_title: str, original_author: str, 
+                          match_title: str, match_authors: List[str]) -> bool:
+        """Determine if we should auto-accept without prompting"""
+        # Normalize titles for comparison
+        norm_original = self.normalize_title(original_title)
+        norm_match = self.normalize_title(match_title)
+        
+        # Case 1: Exact normalized match (handles colons)
+        if norm_original == norm_match:
+            return True
+        
+        # Case 2: Very similar titles AND matching authors
+        if original_author and match_authors:
+            similarity = difflib.SequenceMatcher(None, norm_original, norm_match).ratio()
+            if similarity > 0.9 and self.authors_match([original_author], match_authors):
+                return True
+        
+        return False
+    
     def process_books(self):
         """Main processing loop"""
         books = self.read_csv()
@@ -62,6 +103,7 @@ class BookDescriptionEnricher:
         
         updated_count = 0
         no_match_count = 0
+        auto_accepted_count = 0
         
         print(f"Processing {len(books)} books...")
         
@@ -71,30 +113,36 @@ class BookDescriptionEnricher:
                 continue
             
             title = book.get('Title', '').strip()
+            author = book.get('Author', '').strip()
             if not title:
                 continue
             
             print(f"\n[{i}/{len(books)}] Processing: {title}")
             
             # Search Google Books
-            best_match = self.search_google_books(title)
+            best_match = self.search_google_books(title, author)
             
             if not best_match:
                 print("  No results found")
                 no_match_count += 1
                 continue
             
-            # Check for exact title match (case-insensitive)
-            if best_match['title'].lower() == title.lower():
-                # Auto-accept exact match
+            # Check if we should auto-accept
+            if self.should_auto_accept(title, author, best_match['title'], best_match['authors']):
                 book['Notes'] = best_match['description']
                 updated_count += 1
-                print("  ✓ Auto-added description (exact match)")
+                auto_accepted_count += 1
+                print(f"  ✓ Auto-added description (similar title + author match)")
+                print(f"     Original: '{title}'")
+                print(f"     Google:   '{best_match['title']}'")
             else:
-                # Any title difference → prompt user
+                # Show difference and prompt user
+                print(f"  Original title: {title}")
+                if author:
+                    print(f"  Original author: {author}")
                 print(f"  Google Books title: {best_match['title']}")
                 if best_match['authors']:
-                    print(f"  Authors: {', '.join(best_match['authors'])}")
+                    print(f"  Google Books authors: {', '.join(best_match['authors'])}")
                 if best_match['year']:
                     print(f"  Year: {best_match['year']}")
                 
@@ -114,6 +162,8 @@ class BookDescriptionEnricher:
         print(f"\n" + "="*50)
         print(f"PROCESSING COMPLETE")
         print(f"Books updated: {updated_count}")
+        print(f"  - Auto-accepted: {auto_accepted_count}")
+        print(f"  - Manual accept: {updated_count - auto_accepted_count}")
         print(f"No match/skipped: {no_match_count}")
         print(f"Output file: {self.output_file}")
     
