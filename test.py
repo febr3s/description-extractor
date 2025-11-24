@@ -40,8 +40,8 @@ class BookDescriptionEnricher:
         # Simple check - if first author matches, consider it good enough
         return primary1 in primary2 or primary2 in primary1
     
-    def search_google_books(self, title: str, author: str = None) -> Optional[Dict]:
-        """Search Google Books API and return the best English result"""
+    def search_google_books(self, title: str, author: str = None) -> List[Dict]:
+        """Search Google Books API and return multiple results"""
         time.sleep(1)  # Basic rate limiting
         
         try:
@@ -49,7 +49,7 @@ class BookDescriptionEnricher:
                 "https://www.googleapis.com/books/v1/volumes",
                 params={
                     'q': f"{title} {author}" if author else title,
-                    'maxResults': 3,
+                    'maxResults': 5,  # Get more results to cycle through
                     'langRestrict': 'en'  # Prefer English results
                 },
                 timeout=10
@@ -58,22 +58,26 @@ class BookDescriptionEnricher:
             data = response.json()
             
             if not data.get('items'):
-                return None
+                return []
             
-            # Return the first result (best match from Google)
-            first_item = data['items'][0]
-            volume_info = first_item.get('volumeInfo', {})
+            # Process all results
+            results = []
+            for item in data['items']:
+                volume_info = item.get('volumeInfo', {})
+                results.append({
+                    'title': volume_info.get('title', ''),
+                    'description': volume_info.get('description', ''),
+                    'authors': volume_info.get('authors', []),
+                    'year': volume_info.get('publishedDate', '')[:4] if volume_info.get('publishedDate') else '',
+                    'publisher': volume_info.get('publisher', ''),
+                    'pageCount': volume_info.get('pageCount', '')
+                })
             
-            return {
-                'title': volume_info.get('title', ''),
-                'description': volume_info.get('description', ''),
-                'authors': volume_info.get('authors', []),
-                'year': volume_info.get('publishedDate', '')[:4] if volume_info.get('publishedDate') else ''
-            }
+            return results
             
         except Exception as e:
             print(f"API error for '{title}': {e}")
-            return None
+            return []
     
     def should_auto_accept(self, original_title: str, original_author: str, 
                           match_title: str, match_authors: List[str]) -> bool:
@@ -93,6 +97,40 @@ class BookDescriptionEnricher:
                 return True
         
         return False
+    
+    def prompt_for_match(self, original_title: str, original_author: str, matches: List[Dict]) -> Optional[Dict]:
+        """Prompt user to select from multiple matches, or skip"""
+        for i, match in enumerate(matches, 1):
+            print(f"\n--- Match {i}/{len(matches)} ---")
+            print(f"Title: {match['title']}")
+            if match['authors']:
+                print(f"Authors: {', '.join(match['authors'])}")
+            if match['year']:
+                print(f"Year: {match['year']}")
+            if match['publisher']:
+                print(f"Publisher: {match['publisher']}")
+            if match['pageCount']:
+                print(f"Pages: {match['pageCount']}")
+            
+            # Show description preview
+            if match['description']:
+                preview = match['description'][:200] + "..." if len(match['description']) > 200 else match['description']
+                print(f"Description: {preview}")
+            
+            while True:
+                response = input("\nUse this description? [y]es / [n]ext / [s]kip: ").lower().strip()
+                if response in ['y', 'yes']:
+                    return match
+                elif response in ['n', 'next']:
+                    break  # Move to next match
+                elif response in ['s', 'skip']:
+                    return None
+                else:
+                    print("Please enter y, n, or s")
+        
+        # If we've gone through all matches and user didn't select any
+        print("No more matches available")
+        return None
     
     def process_books(self):
         """Main processing loop"""
@@ -114,45 +152,45 @@ class BookDescriptionEnricher:
             
             title = book.get('Title', '').strip()
             author = book.get('Author', '').strip()
+            original_year = book.get('Publication Year', '').strip()
+            
             if not title:
                 continue
             
             print(f"\n[{i}/{len(books)}] Processing: {title}")
+            if author:
+                print(f"  Author: {author}")
+            if original_year:
+                print(f"  Year: {original_year}")
             
-            # Search Google Books
-            best_match = self.search_google_books(title, author)
+            # Search Google Books - get multiple results
+            matches = self.search_google_books(title, author)
             
-            if not best_match:
+            if not matches:
                 print("  No results found")
                 no_match_count += 1
                 continue
             
-            # Check if we should auto-accept
-            if self.should_auto_accept(title, author, best_match['title'], best_match['authors']):
-                book['Notes'] = best_match['description']
+            # Check first match for auto-accept
+            first_match = matches[0]
+            if self.should_auto_accept(title, author, first_match['title'], first_match['authors']):
+                book['Notes'] = first_match['description']
                 updated_count += 1
                 auto_accepted_count += 1
                 print(f"  ✓ Auto-added description (similar title + author match)")
                 print(f"     Original: '{title}'")
-                print(f"     Google:   '{best_match['title']}'")
+                print(f"     Google:   '{first_match['title']}'")
             else:
-                # Show difference and prompt user
-                print(f"  Original title: {title}")
-                if author:
-                    print(f"  Original author: {author}")
-                print(f"  Google Books title: {best_match['title']}")
-                if best_match['authors']:
-                    print(f"  Google Books authors: {', '.join(best_match['authors'])}")
-                if best_match['year']:
-                    print(f"  Year: {best_match['year']}")
+                # Show all matches and let user choose
+                print(f"\n  Found {len(matches)} potential matches:")
+                selected_match = self.prompt_for_match(title, author, matches)
                 
-                response = input("  Use this description? [y/n]: ").lower().strip()
-                if response in ['y', 'yes']:
-                    book['Notes'] = best_match['description']
+                if selected_match:
+                    book['Notes'] = selected_match['description']
                     updated_count += 1
                     print("  ✓ Added description")
                 else:
-                    print("  ✗ Skipped")
+                    print("  ✗ Skipped book")
                     no_match_count += 1
             
             # Save progress after each book
