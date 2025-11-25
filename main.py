@@ -187,10 +187,12 @@ class BookDescriptionEnricher:
                 
                 if selected_match:
                     book['Notes'] = selected_match['description']
+                    book['Notes'] += '\n\n<div class="comment">\n<p>This description was automatically added from \n<a href="https://books.google.com/books?id=JK8VXK7QMNAC">Google Books</a>. \nFor a customized abstract or excerpt, add a note to the item in the \n<a href="github.com/{{github}}/{{BASE_URL}}">Zotero library</a></p>\n</div>'
                     updated_count += 1
                     print("  ✓ Added description")
                 else:
                     print("  ✗ Skipped book")
+                    book['Notes'] = '<div class="comment">\n<p>This book needs an abstract or excerpt, and it doesn\'t have a Google Books description available to use. For a customized abstract or excerpt, add a note to the item in the \n<a href="github.com/{{github}}/{{BASE_URL}}">Zotero library</a></p>\n</div>'
                     no_match_count += 1
             
             # Save progress after each book
