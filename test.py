@@ -168,6 +168,8 @@ class BookDescriptionEnricher:
             
             if not matches:
                 print("  No results found")
+                # ADDED: Add "no description available" message
+                book['Notes'] = '<div class="comment">\n<p>This book needs an abstract or excerpt, and it doesn\'t have a Google Books description available to use. For a customized abstract or excerpt, add a note to the item in the \n<a href="github.com/{{github}}/{{BASE_URL}}">Zotero library</a></p>\n</div>'
                 no_match_count += 1
                 continue
             
@@ -175,6 +177,8 @@ class BookDescriptionEnricher:
             first_match = matches[0]
             if self.should_auto_accept(title, author, first_match['title'], first_match['authors']):
                 book['Notes'] = first_match['description']
+                # ADDED: Add Google Books attribution
+                book['Notes'] += '\n\n<div class="comment">\n<p>This description was automatically added from \n<a href="https://books.google.com/books?id=JK8VXK7QMNAC">Google Books</a>. \nFor a customized abstract or excerpt, add a note to the item in the \n<a href="github.com/{{github}}/{{BASE_URL}}">Zotero library</a></p>\n</div>'
                 updated_count += 1
                 auto_accepted_count += 1
                 print(f"  ✓ Auto-added description (similar title + author match)")
@@ -187,11 +191,13 @@ class BookDescriptionEnricher:
                 
                 if selected_match:
                     book['Notes'] = selected_match['description']
+                    # ADDED: Add Google Books attribution
                     book['Notes'] += '\n\n<div class="comment">\n<p>This description was automatically added from \n<a href="https://books.google.com/books?id=JK8VXK7QMNAC">Google Books</a>. \nFor a customized abstract or excerpt, add a note to the item in the \n<a href="github.com/{{github}}/{{BASE_URL}}">Zotero library</a></p>\n</div>'
                     updated_count += 1
                     print("  ✓ Added description")
                 else:
                     print("  ✗ Skipped book")
+                    # ADDED: Add "no description available" message
                     book['Notes'] = '<div class="comment">\n<p>This book needs an abstract or excerpt, and it doesn\'t have a Google Books description available to use. For a customized abstract or excerpt, add a note to the item in the \n<a href="github.com/{{github}}/{{BASE_URL}}">Zotero library</a></p>\n</div>'
                     no_match_count += 1
             
